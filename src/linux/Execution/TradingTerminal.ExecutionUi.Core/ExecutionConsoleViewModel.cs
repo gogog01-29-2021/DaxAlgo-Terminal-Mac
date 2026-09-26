@@ -457,7 +457,13 @@ public sealed partial class ExecutionConsoleViewModel : ViewModelBase, IDisposab
             return;
         }
 
-        await RunCommandAsync(token => _client.SubmitManualOrderAsync(request, token));
+        var result = await RunCommandAsync(token => _client.SubmitManualOrderAsync(request, token));
+        // ConfirmPendingIntoOmsAsync (the TSD-confirm path) reads ManualTicketError to decide
+        // whether the caller may report this intent "confirmed" and mirror a fill back to TSD --
+        // RunCommandAsync only sets OperationMessage, so without this a risk/OMS rejection here
+        // was silently treated as success by that caller.
+        if (!result.IsSuccess)
+            ManualTicketError = result.Message;
     }
 
     [RelayCommand]
