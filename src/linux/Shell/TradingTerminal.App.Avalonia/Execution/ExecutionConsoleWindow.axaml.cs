@@ -24,7 +24,9 @@ public partial class ExecutionConsoleWindow : Window
         if (store is null || client is null)
             return;
 
-        _pending = new PendingConfirmsViewModel(store, client, ConfirmIntoOmsAsync);
+        var fills = services.GetService<TsdFillMirror>();
+        var replay = services.GetService<IExecutionFillReplay>();
+        _pending = new PendingConfirmsViewModel(store, client, ConfirmIntoOmsAsync, fills, replay);
         if (this.FindControl<Border>("PendingConfirmsHost") is { } host)
         {
             host.DataContext = _pending;

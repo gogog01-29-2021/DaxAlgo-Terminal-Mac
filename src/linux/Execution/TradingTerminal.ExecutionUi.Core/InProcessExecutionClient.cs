@@ -18,7 +18,7 @@ namespace TradingTerminal.ExecutionUi;
 /// books construct only <see cref="SimulatedExecutionAdapter"/>; an explicitly registered and
 /// authenticated live-safety-gated broker adapter can be attached without changing the default composition.
 /// </summary>
-public sealed class InProcessExecutionClient : IExecutionClient, IExecutionBookTargetIntake
+public sealed class InProcessExecutionClient : IExecutionClient, IExecutionBookTargetIntake, IExecutionFillReplay
 {
     private const int MaximumBooks = 12;
     private static readonly SemaphoreSlim ExecutionModeChangeGate = new(1, 1);
@@ -38,6 +38,7 @@ public sealed class InProcessExecutionClient : IExecutionClient, IExecutionBookT
     private readonly IExecutionLeaseStore _executionLeaseStore;
     private readonly IExecutionBookStore _bookStore;
     private readonly IExecutionModeStatusPublisher? _modeStatusPublisher;
+    private readonly IExecutionFillSink? _fillSink;
     private readonly Dictionary<string, string> _adapterConnectionErrors = new(StringComparer.Ordinal);
     private string _interactiveBrokersAccountId;
     private string? _lastOperationMessage;
@@ -56,9 +57,11 @@ public sealed class InProcessExecutionClient : IExecutionClient, IExecutionBookT
         IClock? executionClock = null,
         IExecutionLeaseStore? executionLeaseStore = null,
         ExecutionModeStatusProjection? executionModeStatus = null,
-        IExecutionBookStore? bookStore = null)
+        IExecutionBookStore? bookStore = null,
+        IExecutionFillSink? fillSink = null)
     {
         _liveConfirmationStore = liveConfirmationStore;
+        _fillSink = fillSink;
         _cTraderOptions = cTraderOptions;
         _alpacaOptions = alpacaOptions;
         _interactiveBrokersOptions = interactiveBrokersOptions;
@@ -789,11 +792,11 @@ FinishConnect:
                     symbol);
                 var registeredAdapter = FindRegisteredAdapter(adapterId);
                 runtime = isPaper
-                    ? InProcessBookRuntime.CreateEmpty(id, _executionLeaseStore)
+                    ? InProcessBookRuntime.CreateEmpty(id, _executionLeaseStore, _fillSink)
                     : registeredAdapter is AlpacaExecutionAdapter
                         or InteractiveBrokersExecutionAdapter
                         or CTraderExecutionAdapter
-                        ? new LiveBrokerBookRuntime(id, registeredAdapter, _executionLeaseStore)
+                        ? new LiveBrokerBookRuntime(id, registeredAdapter, _executionLeaseStore, _fillSink)
                         : null;
             }
         }
@@ -977,6 +980,84 @@ FinishConnect:
         return result.IsSuccess
             ? ExecutionTargetSubmissionResult.Success(result.Message)
             : ExecutionTargetSubmissionResult.Failure(result.Message);
+    }
+
+    /// <inheritdoc />
+    public void ReplayCommittedFills(string orderId)
+    {
+        if (_fillSink is null || string.IsNullOrWhiteSpace(orderId))
+            return;
+        lock (_gate)
+        {
+            foreach (var book in _books)
+            {
+                if (book.Runtime is not null && book.Runtime.TryEmitCommittedFills(orderId, _fillSink))
+                    return;
+            }
+        }
+    }
+
+    private static decimal ScaledToDecimal(long coefficient, byte scale)
+    {
+        var value = (decimal)coefficient;
+        for (var index = 0; index < scale; index++)
+            value /= 10m;
+        return value;
+    }
+
+    private static void EmitPaperFill(
+        IExecutionFillSink? sink,
+        ExecutionMode mode,
+        ClientOrderId orderId,
+        FillExecution fill,
+        DeduplicationKey fillKey,
+        ScaledQuantity cumulativeFilled)
+    {
+        if (sink is null || mode != ExecutionMode.Paper || !fillKey.IsValid || !orderId.IsValid)
+            return;
+        sink.OnExecutionFill(new ExecutionFillNotice(
+            orderId.Value,
+            ScaledToDecimal(fill.Quantity.Coefficient, fill.Quantity.Scale),
+            ScaledToDecimal(fill.Price.Coefficient, fill.Price.Scale),
+            fillKey.Value,
+            ScaledToDecimal(cumulativeFilled.Coefficient, cumulativeFilled.Scale),
+            ExecutionMode.Paper));
+    }
+
+    private static bool EmitCommittedFills(
+        OrderManagementService oms,
+        ExecutionMode mode,
+        string orderId,
+        IExecutionFillSink sink)
+    {
+        if (string.IsNullOrWhiteSpace(orderId) || sink is null)
+            return false;
+        var id = new ClientOrderId(orderId);
+        if (!id.IsValid)
+            return false;
+        var events = oms.ReadEvents(id);
+        if (events.Count == 0)
+            return false;
+        if (mode != ExecutionMode.Paper)
+            return true;
+
+        var cumulative = 0m;
+        foreach (var item in events)
+        {
+            if (item.Kind != OrderEventKind.FillReceived || item.Fill is not { } fill)
+                continue;
+            var incremental = ScaledToDecimal(fill.Quantity.Coefficient, fill.Quantity.Scale);
+            cumulative += incremental;
+            sink.OnExecutionFill(new ExecutionFillNotice(
+                orderId,
+                incremental,
+                ScaledToDecimal(fill.Price.Coefficient, fill.Price.Scale),
+                item.DeduplicationKey.Value,
+                cumulative,
+                ExecutionMode.Paper));
+        }
+
+        return true;
     }
 
     private BookEntry? FindBook(string bookId) =>
@@ -1686,6 +1767,8 @@ FinishConnect:
             BookConfiguration configuration,
             TradeIntent intent,
             CancellationToken cancellationToken);
+
+        bool TryEmitCommittedFills(string orderId, IExecutionFillSink sink);
     }
 
     private sealed class BookEntry(
@@ -1720,7 +1803,7 @@ FinishConnect:
                 : Runtime.BuildReadModel(Configuration, IsPaused);
     }
 
-    private sealed class InProcessBookRuntime : IBookRuntime
+    private sealed class InProcessBookRuntime : IBookRuntime, IExecutionFillObserver
     {
         private const int LedgerViewCapacity = 96;
         private const int OperationalHistoryCapacity = 500;
@@ -1742,6 +1825,7 @@ FinishConnect:
         private readonly ReconciliationEngine _reconciliation;
         private readonly ExecutionCoordinator _coordinator;
         private readonly ExecutionServiceEngine _engine;
+        private readonly IExecutionFillSink? _fillSink;
         private readonly Queue<ExecutionLedgerEventReadModel> _ledgerView = new();
         private readonly Queue<TradingTerminal.Execution.Oms.OrderEvent> _historyView = new();
         private readonly Dictionary<string, DateTime> _pendingAcknowledgements = new(StringComparer.Ordinal);
@@ -1761,8 +1845,10 @@ FinishConnect:
             string bookId,
             IEnumerable<VenueSubmitPlan> plans,
             DateTime seedStartUtc,
-            IExecutionLeaseStore executionLeaseStore)
+            IExecutionLeaseStore executionLeaseStore,
+            IExecutionFillSink? fillSink)
         {
+            _fillSink = fillSink;
             _bookId = bookId;
             _clock = new MutableExecutionClock(seedStartUtc);
             _ledger = new InMemoryOrderEventStore();
@@ -1801,7 +1887,8 @@ FinishConnect:
                     _oms,
                     [_adapter],
                     _reconciliation,
-                    [_lease]);
+                    [_lease],
+                    _fillSink is null ? null : this);
                 _engine = new ExecutionServiceEngine(_ledger, _oms, coordinator, _scheduler, _lease);
                 _coordinator = coordinator;
             }
@@ -1815,12 +1902,23 @@ FinishConnect:
 
         internal static InProcessBookRuntime CreateEmpty(
             string bookId,
-            IExecutionLeaseStore executionLeaseStore) =>
-            new(bookId, Array.Empty<VenueSubmitPlan>(), DateTime.UtcNow, executionLeaseStore);
+            IExecutionLeaseStore executionLeaseStore,
+            IExecutionFillSink? fillSink) =>
+            new(bookId, Array.Empty<VenueSubmitPlan>(), DateTime.UtcNow, executionLeaseStore, fillSink);
 
         public BrokerExecutionAccount Account => _adapter.Account;
 
         public IBrokerExecutionAdapter Adapter => _adapter;
+
+        public void OnFillAppended(
+            ClientOrderId orderId,
+            FillExecution fill,
+            DeduplicationKey fillKey,
+            ScaledQuantity cumulativeFilled) =>
+            EmitPaperFill(_fillSink, _adapter.Mode, orderId, fill, fillKey, cumulativeFilled);
+
+        public bool TryEmitCommittedFills(string orderId, IExecutionFillSink sink) =>
+            EmitCommittedFills(_oms, _adapter.Mode, orderId, sink);
 
         public ExecutionBookReadModel BuildReadModel(BookConfiguration configuration, bool isPaused)
         {
@@ -2835,7 +2933,7 @@ FinishConnect:
     /// (Alpaca, Interactive Brokers, or cTrader). The registered adapter remains transport owner; this
     /// runtime owns only the bounded OMS/ledger/lease graph.
     /// </summary>
-    private sealed class LiveBrokerBookRuntime : IBookRuntime
+    private sealed class LiveBrokerBookRuntime : IBookRuntime, IExecutionFillObserver
     {
         private const int LedgerViewCapacity = 96;
         private const int OperationalTableCapacity = 500;
@@ -2859,6 +2957,7 @@ FinishConnect:
         private readonly ReconciliationEngine _reconciliation;
         private readonly ExecutionCoordinator _coordinator;
         private readonly ExecutionServiceEngine _engine;
+        private readonly IExecutionFillSink? _fillSink;
         private readonly string _clientOrderNamespace =
             Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
         private long _requestSequence;
@@ -2878,9 +2977,11 @@ FinishConnect:
         internal LiveBrokerBookRuntime(
             string bookId,
             IBrokerExecutionAdapter adapter,
-            IExecutionLeaseStore executionLeaseStore)
+            IExecutionLeaseStore executionLeaseStore,
+            IExecutionFillSink? fillSink)
         {
             _bookId = bookId;
+            _fillSink = fillSink;
             _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
             switch (adapter)
             {
@@ -2964,7 +3065,8 @@ FinishConnect:
                     _oms,
                     [_adapter],
                     _reconciliation,
-                    [_lease]);
+                    [_lease],
+                    _fillSink is null ? null : this);
                 _engine = new ExecutionServiceEngine(_ledger, _oms, coordinator, scheduler, _lease);
                 _coordinator = coordinator;
             }
@@ -2980,6 +3082,16 @@ FinishConnect:
         public BrokerExecutionAccount Account => _adapter.Account;
 
         public IBrokerExecutionAdapter Adapter => _adapter;
+
+        public void OnFillAppended(
+            ClientOrderId orderId,
+            FillExecution fill,
+            DeduplicationKey fillKey,
+            ScaledQuantity cumulativeFilled) =>
+            EmitPaperFill(_fillSink, _adapter.Mode, orderId, fill, fillKey, cumulativeFilled);
+
+        public bool TryEmitCommittedFills(string orderId, IExecutionFillSink sink) =>
+            EmitCommittedFills(_oms, _adapter.Mode, orderId, sink);
 
         private async ValueTask RefreshBrokerReconciliationAsync(CancellationToken cancellationToken)
         {
@@ -3161,6 +3273,8 @@ FinishConnect:
         {
             ThrowIfDisposed();
             await RefreshBrokerReconciliationAsync(cancellationToken).ConfigureAwait(false);
+            if (_alpaca is { Mode: ExecutionMode.Paper })
+                await _alpaca.ReconcileTrackedOrderFillsAsync(cancellationToken).ConfigureAwait(false);
             return RunReconciliation(ReconciliationTrigger.OperatorRequest);
         }
 

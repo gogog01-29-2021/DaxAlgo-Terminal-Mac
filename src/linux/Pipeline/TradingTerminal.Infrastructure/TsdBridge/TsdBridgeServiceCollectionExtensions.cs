@@ -24,6 +24,8 @@ public static class TsdBridgeServiceCollectionExtensions
             http.BaseAddress = new Uri(baseUrl);
             http.Timeout = TimeSpan.FromSeconds(5);
         });
+        services.AddSingleton<ITsdFillPoster, TsdBridgeFillPoster>();
+        services.AddSingleton<TsdFillMirror>();
         services.AddHostedService<TsdBridgeHostedService>();
         return services;
     }

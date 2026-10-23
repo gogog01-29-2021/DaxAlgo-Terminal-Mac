@@ -313,7 +313,10 @@ public static class ServiceConfiguration
         services.AddSingleton<TradingTerminal.Execution.Oms.ILiveExecutionConfirmationStore>(liveConfirmations);
         services.AddSingleton<IExecutionConfirmationService, AvaloniaExecutionConfirmationService>();
         AddGatedVenueExecution(services, configuration, liveConfirmations, activityLog);
+        services.AddSingleton<IExecutionFillSink, TsdExecutionFillSink>();
         services.AddExecutionConsole();
+        services.AddSingleton<IExecutionFillReplay>(sp =>
+            (InProcessExecutionClient)sp.GetRequiredService<IExecutionClient>());
         services.AddTransient<ExecutionConsoleWindow>();
 
         // AI tool VMs (portable — ILogger-only ctors; file I/O via the UiFile seam).

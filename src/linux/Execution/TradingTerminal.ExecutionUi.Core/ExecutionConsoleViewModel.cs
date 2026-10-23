@@ -18,7 +18,11 @@ namespace TradingTerminal.ExecutionUi;
 /// real OMS-assigned order id and book id so the caller can mirror an accurate fill back to the TSD
 /// bridge ledger instead of fabricating a correlation id (S06 field-map promotion).
 /// </summary>
-public readonly record struct ExecutionConfirmOutcome(bool Ok, string OrderId = "", string BookId = "")
+public readonly record struct ExecutionConfirmOutcome(
+    bool Ok,
+    string OrderId = "",
+    string BookId = "",
+    bool Paper = false)
 {
     public static ExecutionConfirmOutcome Failed => new(false);
 }
@@ -408,10 +412,11 @@ public sealed partial class ExecutionConsoleViewModel : ViewModelBase, IDisposab
         }
 
         var bookId = SelectedBook?.Id ?? "";
+        var paper = SelectedBook?.IsLive != true;
         _lastManualOrderId = "";
         await SubmitManualOrderAsync().ConfigureAwait(true);
         return string.IsNullOrEmpty(ManualTicketError)
-            ? new ExecutionConfirmOutcome(true, _lastManualOrderId, bookId)
+            ? new ExecutionConfirmOutcome(true, _lastManualOrderId, bookId, paper)
             : ExecutionConfirmOutcome.Failed;
     }
 

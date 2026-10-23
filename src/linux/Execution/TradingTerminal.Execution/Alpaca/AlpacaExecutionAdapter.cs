@@ -247,6 +247,21 @@ public sealed class AlpacaExecutionAdapter : IBrokerExecutionAdapter, IDisposabl
                 isExecutionAuthenticated: account.IsExecutionAuthorized,
                 isExecutionCertified: canCertifyExactExecution);
             await _updateSource.StartAsync(_transport, connectionToken).ConfigureAwait(false);
+            if (Mode == ExecutionMode.Paper)
+            {
+                try
+                {
+                    await ReconcileTrackedOrderFillsAsync(connectionToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (connectionToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    // The polling source still catches up. A reconcile miss must not fail the paper session.
+                }
+            }
         }
         catch
         {
@@ -557,6 +572,23 @@ public sealed class AlpacaExecutionAdapter : IBrokerExecutionAdapter, IDisposabl
             _inferredPosition = positions.Length == 1 ? positions[0].Quantity : ScaledQuantity.Zero;
         }
         Schedule(() => CashSnapshotReceived?.Invoke(cash));
+    }
+
+    /// <summary>
+    /// Paper-only catch-up. Polls order status and re-enters the trade-update fill path so a gap
+    /// while the update source was stopped becomes one incremental fill. Live mode returns without
+    /// reading orders. Already-applied cumulative quantity produces no second fill.
+    /// </summary>
+    public async Task ReconcileTrackedOrderFillsAsync(CancellationToken cancellationToken = default)
+    {
+        if (Mode != ExecutionMode.Paper || _disposed || !_transport.IsConnected)
+            return;
+
+        var openTask = _transport.GetOrdersAsync(AlpacaOrderStatusFilter.Open, cancellationToken);
+        var closedTask = _transport.GetOrdersAsync(AlpacaOrderStatusFilter.Closed, cancellationToken);
+        await Task.WhenAll(openTask, closedTask).ConfigureAwait(false);
+        foreach (var order in SelectAuthoritativeOrders((await openTask.ConfigureAwait(false)).Concat(await closedTask.ConfigureAwait(false))))
+            OnOrderUpdated(order);
     }
 
     public void Dispose()

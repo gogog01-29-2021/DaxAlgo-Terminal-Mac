@@ -146,17 +146,25 @@ public sealed class TsdBridgeClient
         }
     }
 
-    public async Task PostFillAsync(BridgeFillDto fill, CancellationToken ct)
+    /// <summary>Returns false when the mirror was not acknowledged. Callers may retry the same dedupe key.</summary>
+    public async Task<bool> PostFillAsync(BridgeFillDto fill, CancellationToken ct)
     {
         try
         {
             using var resp = await _http.PostAsJsonAsync("api/bridge/fills", fill, JsonOptions, ct)
                 .ConfigureAwait(false);
-            resp.EnsureSuccessStatusCode();
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("TSD fill mirror returned {StatusCode}", (int)resp.StatusCode);
+                return false;
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "TSD fill mirror failed");
+            return false;
         }
     }
 

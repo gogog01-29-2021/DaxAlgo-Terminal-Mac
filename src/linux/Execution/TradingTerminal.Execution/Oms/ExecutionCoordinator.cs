@@ -56,6 +56,7 @@ public sealed class ExecutionCoordinator : IDisposable
     private readonly HashSet<BrokerExecutionAccount> _startupReconciledAccounts = [];
     private readonly Dictionary<BrokerExecutionAccount, ExecutionLease> _executionLeases;
     private readonly ReconciliationEngine? _reconciliation;
+    private readonly IExecutionFillObserver? _fillObserver;
     private bool _disposed;
 
     /// <summary>Creates a coordinator over one simulated adapter/account.</summary>
@@ -106,9 +107,25 @@ public sealed class ExecutionCoordinator : IDisposable
         ReconciliationEngine? reconciliation,
         IEnumerable<ExecutionLease>? executionLeases,
         int workerCapacity = 64)
+        : this(oms, adapters, reconciliation, executionLeases, fillObserver: null, workerCapacity)
+    {
+    }
+
+    /// <summary>
+    /// Creates one bounded worker per account, fences mutations through the account lease, and
+    /// notifies <paramref name="fillObserver"/> only when a fill is newly appended.
+    /// </summary>
+    public ExecutionCoordinator(
+        OrderManagementService oms,
+        IEnumerable<IBrokerExecutionAdapter> adapters,
+        ReconciliationEngine? reconciliation,
+        IEnumerable<ExecutionLease>? executionLeases,
+        IExecutionFillObserver? fillObserver,
+        int workerCapacity = 64)
     {
         _oms = oms ?? throw new ArgumentNullException(nameof(oms));
         _reconciliation = reconciliation;
+        _fillObserver = fillObserver;
         ArgumentNullException.ThrowIfNull(adapters);
         if (workerCapacity <= 0)
             throw new ArgumentOutOfRangeException(nameof(workerCapacity));
@@ -959,6 +976,7 @@ public sealed class ExecutionCoordinator : IDisposable
     {
         try
         {
+            var notifyFill = TryPrepareNewFill(adapterEvent, out var pendingFill, out var pendingKey);
             var result = adapterEvent switch
             {
                 BrokerOrderEvent order => _oms.ApplyVenueEvent(order.VenueEvent),
@@ -972,6 +990,8 @@ public sealed class ExecutionCoordinator : IDisposable
                     null,
                     "The adapter event category is unsupported."),
             };
+            if (notifyFill && result.IsSuccess && result.Projection is { } projection)
+                NotifyFillAppended(adapterEvent.ClientOrderId, pendingFill, pendingKey, projection.FilledQuantity);
             if (_reconciliation is not null &&
                 result.Projection is { State: OrderLifecycleState.Unknown } &&
                 _registrations.TryGetValue(expectedAccount, out var registration))
@@ -987,6 +1007,65 @@ public sealed class ExecutionCoordinator : IDisposable
         {
             RecordCallbackFailure(expectedAccount, exception);
             return false;
+        }
+    }
+
+    private bool TryPrepareNewFill(
+        BrokerAdapterEvent adapterEvent,
+        out FillExecution fill,
+        out DeduplicationKey fillKey)
+    {
+        fill = default;
+        fillKey = default;
+        if (_fillObserver is null || !TryReadVenueEvent(adapterEvent, out var venueEvent))
+            return false;
+        if (venueEvent.Kind != VenueEventKind.Fill ||
+            venueEvent.Fill is not { IsValid: true } candidate ||
+            !venueEvent.DeduplicationKey.IsValid)
+        {
+            return false;
+        }
+
+        var alreadyCommitted = _oms.ReadEvents(venueEvent.ClientOrderId).Any(item =>
+            item.Kind == OrderEventKind.FillReceived &&
+            item.DeduplicationKey == venueEvent.DeduplicationKey);
+        if (alreadyCommitted)
+            return false;
+
+        fill = candidate;
+        fillKey = venueEvent.DeduplicationKey;
+        return true;
+    }
+
+    private static bool TryReadVenueEvent(BrokerAdapterEvent adapterEvent, out VenueEvent venueEvent)
+    {
+        switch (adapterEvent)
+        {
+            case BrokerOrderEvent order:
+                venueEvent = order.VenueEvent;
+                return venueEvent is not null;
+            case BrokerExecutionEvent execution:
+                venueEvent = execution.VenueEvent;
+                return venueEvent is not null;
+            default:
+                venueEvent = null!;
+                return false;
+        }
+    }
+
+    private void NotifyFillAppended(
+        ClientOrderId orderId,
+        FillExecution fill,
+        DeduplicationKey fillKey,
+        ScaledQuantity cumulativeFilled)
+    {
+        try
+        {
+            _fillObserver?.OnFillAppended(orderId, fill, fillKey, cumulativeFilled);
+        }
+        catch (Exception)
+        {
+            // The fill is already committed. A subscriber cannot roll it back or fault the worker.
         }
     }
 

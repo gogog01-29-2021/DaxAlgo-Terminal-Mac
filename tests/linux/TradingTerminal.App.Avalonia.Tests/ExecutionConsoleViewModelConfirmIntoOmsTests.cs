@@ -41,6 +41,7 @@ public sealed class ExecutionConsoleViewModelConfirmIntoOmsTests
 
         outcome.OrderId.Should().Be("daxt-book-1-7");
         outcome.BookId.Should().Be("book-1");
+        outcome.Paper.Should().BeTrue();
     }
 
     [Fact]

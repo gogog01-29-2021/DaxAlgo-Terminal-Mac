@@ -15,6 +15,7 @@ internal sealed class TsdBridgeHostedService : BackgroundService
 {
     private readonly TsdBridgeClient _client;
     private readonly TsdPendingConfirmStore _store;
+    private readonly TsdFillMirror _fills;
     private readonly IOptionsMonitor<TsdBridgeOptions> _options;
     private readonly ILogger<TsdBridgeHostedService> _logger;
     private long _sinceMs;
@@ -23,11 +24,13 @@ internal sealed class TsdBridgeHostedService : BackgroundService
     public TsdBridgeHostedService(
         TsdBridgeClient client,
         TsdPendingConfirmStore store,
+        TsdFillMirror fills,
         IOptionsMonitor<TsdBridgeOptions> options,
         ILogger<TsdBridgeHostedService> logger)
     {
         _client = client;
         _store = store;
+        _fills = fills;
         _options = options;
         _logger = logger;
         _sinceMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 60_000;
@@ -59,6 +62,8 @@ internal sealed class TsdBridgeHostedService : BackgroundService
                     _announcedUp = true;
                     _logger.LogInformation("Connected to strategy sidecar (silent).");
                 }
+
+                await _fills.FlushAsync(stoppingToken).ConfigureAwait(false);
 
                 var signals = await _client.GetSignalsAsync(_sinceMs, stoppingToken)
                     .ConfigureAwait(false);

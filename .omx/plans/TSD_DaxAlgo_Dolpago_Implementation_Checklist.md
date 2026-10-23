@@ -28,7 +28,7 @@ Retired: old local rewrite R05/R07/R12 labels (conflicting scheme). Do not cite 
 | U10 / V07 | — | Paper path not part of current slice |
 | S03 / V05 | Live `:8000` scan k=2≠k=3 + MDMS bars/ohlcv/book/ticker; evidence doc | Avalonia click→UI; visualizer book still DaxAlgo hub (not MDMS) |
 | U10 / S05 | Bridge + paper ledger assets exist | Explicit book/venue ownership before TOMS/PPMS claims |
-| S06 / C08–C10 / V08–V11 | Next1–3 + **Next4** AI TargetIntent inside grant + durable `owner_lease` on paper ledger; SoftFail 6/6 + confirm→fill mirror | Avalonia confirm→Alpaca OMS both ledgers still manual; LLM TradingDecision object not yet |
+| S06 / C08–C10 / V08–V11 | Next1–3 + **Next4** AI TargetIntent inside grant + durable `owner_lease` on paper ledger; SoftFail + paper confirm registers the OMS order; fill mirror posts real incremental fills (deduped) | Live confirms are not mirrored; `execution_owner` / `strategy_version` / `grant_id` stay on the pending confirm, not the fill body; LLM TradingDecision object not yet |
 | MS-first / mock→real | Mac call graph documented; MDMS REST real; WS dashboard **was** random → now Binance public ticker; backtest fail-closed; bridge+research real; **Step 4** selection/condition/ref continuity (session reload) | optional visualizer→MDMS; TSD solo needs TOMS book ownership |
 | Now B TSMS map | Field map written (Reuse/Extend/Gap) | Promote `strategy_version`, `book_id`, grant/dedupe onto host DTOs |
 | Q08 | Separate risk-refusal test | Full confirm→OMS→fill with research path |

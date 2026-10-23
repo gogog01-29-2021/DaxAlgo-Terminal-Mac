@@ -16,6 +16,8 @@ public sealed partial class PendingConfirmsViewModel : ObservableObject, IDispos
     private readonly ITsdPendingConfirmStore _store;
     private readonly TsdBridgeClient _client;
     private readonly Func<TsdPendingConfirm, CancellationToken, Task<ExecutionConfirmOutcome>>? _confirmIntoOms;
+    private readonly TsdFillMirror? _fills;
+    private readonly IExecutionFillReplay? _fillReplay;
 
     public ObservableCollection<TsdPendingConfirm> Items { get; } = new();
 
@@ -28,11 +30,15 @@ public sealed partial class PendingConfirmsViewModel : ObservableObject, IDispos
     public PendingConfirmsViewModel(
         ITsdPendingConfirmStore store,
         TsdBridgeClient client,
-        Func<TsdPendingConfirm, CancellationToken, Task<ExecutionConfirmOutcome>>? confirmIntoOms = null)
+        Func<TsdPendingConfirm, CancellationToken, Task<ExecutionConfirmOutcome>>? confirmIntoOms = null,
+        TsdFillMirror? fills = null,
+        IExecutionFillReplay? fillReplay = null)
     {
         _store = store;
         _client = client;
         _confirmIntoOms = confirmIntoOms;
+        _fills = fills;
+        _fillReplay = fillReplay;
         _store.Changed += OnChanged;
         Refresh();
         _ = ProbeAsync();
@@ -76,29 +82,25 @@ public sealed partial class PendingConfirmsViewModel : ObservableObject, IDispos
             return;
         }
 
-        // Model A: mirror fill back to TSD outbox/ledger (SoftFail if TSD down).
-        // ClientOrderId/BookId are the real ids the OMS dispatched with (not a fabricated
-        // "confirm:{id}" string) so TSD-side PPMS/TOMS reconciliation can correlate this fill with
-        // the order's actual lifecycle, not just with the confirm click (S06 field-map promotion).
-        var fillPrice = item.MarkPrice is > 0 ? item.MarkPrice.Value : 0d;
-        await _client.PostFillAsync(
-                new BridgeFillDto
-                {
-                    Symbol = item.Symbol,
-                    Exchange = item.Exchange,
-                    Side = item.Side,
-                    Quantity = item.Quantity,
-                    Price = fillPrice,
-                    SignalId = string.Equals(item.Kind, "signal", StringComparison.OrdinalIgnoreCase)
-                        ? item.Id
-                        : "",
-                    ClientOrderId = string.IsNullOrEmpty(outcome.OrderId) ? $"confirm:{item.Id}" : outcome.OrderId,
-                    DaxOrderId = $"dax:{item.Id}",
-                    BookId = outcome.BookId,
-                    IntentVersion = item.IntentVersion,
-                },
-                CancellationToken.None)
-            .ConfigureAwait(true);
+        // Dispatch is not a fill. Paper/sandbox orders are registered so the mirror posts when the
+        // OMS commits a real fill (price and incremental quantity). Live books are not registered.
+        if (outcome.Paper && _fills is not null && !string.IsNullOrEmpty(outcome.OrderId))
+        {
+            var registered = _fills.TryRegister(
+                new TsdFillBinding(
+                    outcome.OrderId,
+                    item.Symbol,
+                    item.Exchange,
+                    item.Side,
+                    string.Equals(item.Kind, "signal", StringComparison.OrdinalIgnoreCase) ? item.Id : "",
+                    $"dax:{item.Id}",
+                    string.IsNullOrEmpty(outcome.BookId) ? item.BookId : outcome.BookId,
+                    item.IntentVersion,
+                    item.DedupeKey),
+                paper: true);
+            if (registered)
+                _fillReplay?.ReplayCommittedFills(outcome.OrderId);
+        }
 
         if (string.Equals(item.Kind, "intent", StringComparison.OrdinalIgnoreCase))
             await _client.SetIntentStatusAsync(item.Id, "confirmed", CancellationToken.None)
