@@ -556,9 +556,15 @@ public sealed record ExecutionManualOrderRequest(
     };
 }
 
-public readonly record struct ExecutionCommandResult(bool IsSuccess, string Message)
+/// <summary>
+/// <paramref name="OrderId"/> is the OMS-assigned client order id when the command dispatched one
+/// (empty otherwise). It lets callers that need to correlate this command with a later fill or
+/// lifecycle event (e.g. mirroring a confirm back to the TSD bridge ledger) use the real id instead
+/// of re-deriving or fabricating one.
+/// </summary>
+public readonly record struct ExecutionCommandResult(bool IsSuccess, string Message, string OrderId = "")
 {
-    public static ExecutionCommandResult Success(string message) => new(true, message);
+    public static ExecutionCommandResult Success(string message, string orderId = "") => new(true, message, orderId);
 
     public static ExecutionCommandResult Failure(string message) => new(false, message);
 }

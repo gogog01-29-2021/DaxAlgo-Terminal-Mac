@@ -2067,7 +2067,8 @@ FinishConnect:
                 RiskSnapshot(instruction, position.TryGetWholeUnits(out var current) ? current : 0, referencePrice, 0));
             return response.IsSuccess
                 ? ExecutionCommandResult.Success(
-                    $"Order {instruction.Identity.ClientOrderId} reached {response.State?.ToString() ?? "the OMS"} through the book's execution route.")
+                    $"Order {instruction.Identity.ClientOrderId} reached {response.State?.ToString() ?? "the OMS"} through the book's execution route.",
+                    instruction.Identity.ClientOrderId.Value)
                 : ExecutionCommandResult.Failure(
                     $"Order failed closed: {response.Reason ?? response.Fault.ToString()}.");
         }
@@ -3466,7 +3467,8 @@ FinishConnect:
                 Submit: new ExecutionSubmitRequest(instruction, riskInput)));
             return exchange.Response.IsSuccess
                 ? ExecutionCommandResult.Success(
-                    $"{OrderLabel} {clientOrderId} was dispatched through OMS to {RouteLabel} ({exchange.Response.State}).")
+                    $"{OrderLabel} {clientOrderId} was dispatched through OMS to {RouteLabel} ({exchange.Response.State}).",
+                    clientOrderId.Value)
                 : ExecutionCommandResult.Failure(
                     $"{OrderLabel} failed closed: {exchange.Response.Reason ?? exchange.Response.Fault.ToString()}.");
         }

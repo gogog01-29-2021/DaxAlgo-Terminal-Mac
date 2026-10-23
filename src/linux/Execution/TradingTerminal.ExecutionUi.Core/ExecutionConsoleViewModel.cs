@@ -13,6 +13,16 @@ using TradingTerminal.UI;
 
 namespace TradingTerminal.ExecutionUi;
 
+/// <summary>
+/// Result of routing a TSD-confirm (bridge pending signal/intent) into the local OMS. Carries the
+/// real OMS-assigned order id and book id so the caller can mirror an accurate fill back to the TSD
+/// bridge ledger instead of fabricating a correlation id (S06 field-map promotion).
+/// </summary>
+public readonly record struct ExecutionConfirmOutcome(bool Ok, string OrderId = "", string BookId = "")
+{
+    public static ExecutionConfirmOutcome Failed => new(false);
+}
+
 public sealed partial class ExecutionConsoleViewModel : ViewModelBase, IDisposable, IAsyncDisposable
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMilliseconds(750);
@@ -28,6 +38,7 @@ public sealed partial class ExecutionConsoleViewModel : ViewModelBase, IDisposab
     private ExecutionConsoleSnapshot? _snapshot;
     private int _refreshPending = 1;
     private int _disposed;
+    private string _lastManualOrderId = "";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ManagedAdapters))]
@@ -380,24 +391,28 @@ public sealed partial class ExecutionConsoleViewModel : ViewModelBase, IDisposab
     /// <summary>
     /// Prefill then submit when the selected book can take a manual market order (typical Paper path).
     /// </summary>
-    public async Task<bool> ConfirmPendingIntoOmsAsync(
+    public async Task<ExecutionConfirmOutcome> ConfirmPendingIntoOmsAsync(
         string symbol,
         string side,
         double quantity,
         CancellationToken cancellationToken = default)
     {
         if (!TryPrefillManualTicket(symbol, side, quantity))
-            return false;
+            return ExecutionConfirmOutcome.Failed;
         if (!CanSubmitManualTicket)
         {
             ManualTicketError = string.IsNullOrEmpty(ManualTicketError)
                 ? "Ticket prefilled — press Submit order when ready."
                 : ManualTicketError;
-            return false;
+            return ExecutionConfirmOutcome.Failed;
         }
 
+        var bookId = SelectedBook?.Id ?? "";
+        _lastManualOrderId = "";
         await SubmitManualOrderAsync().ConfigureAwait(true);
-        return string.IsNullOrEmpty(ManualTicketError);
+        return string.IsNullOrEmpty(ManualTicketError)
+            ? new ExecutionConfirmOutcome(true, _lastManualOrderId, bookId)
+            : ExecutionConfirmOutcome.Failed;
     }
 
     [RelayCommand]
@@ -464,6 +479,7 @@ public sealed partial class ExecutionConsoleViewModel : ViewModelBase, IDisposab
         // was silently treated as success by that caller.
         if (!result.IsSuccess)
             ManualTicketError = result.Message;
+        _lastManualOrderId = result.OrderId;
     }
 
     [RelayCommand]

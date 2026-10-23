@@ -21,7 +21,7 @@ Retired: old local rewrite R05/R07/R12 labels (conflicting scheme). Do not cite 
 | U03 / C01 | Chart brush → Builder selection | Multi-asset shared context end-to-end |
 | U04 / C02 | Indicator kind+period on sample (EMA 21 JSON) | Full param surface; no coercion proof in UI |
 | U05 / C03 | Volume ≥ k×avg editable + version hash | AND/OR, crosses, multi-indicator |
-| U06 | Local + TSD search (scan API / MDMS fallback) | Denominator + both probability directions (Q03) |
+| U06 | Local + TSD search (scan API / MDMS fallback) **+ both probability directions** (2026-09-26: `scan_volume_multiple` / `ResearchConditionEvaluatorV1` now return `outcome_given_feature` P(outcome\|feature) and `feature_given_outcome` P(feature\|outcome) as distinct numbers, not one hit-rate; ported to both TSD and local evaluators so they agree per R14; live-verified against running TSD server on real BTCUSDT bars, 0.684 vs 0.202 -- genuinely different, not a rounding artifact; 5 Python + 5 C# tests incl. a hand-computed series proving the two numbers can diverge) | Avalonia GUI not run to confirm the summary text renders on screen (dotnet build+test only, no visual click-through); AND/OR conditions (C03/R08) don't yet carry both directions through combination |
 | U07 / C05 / V04 | Named refs A/B + session JSON + pending brush/bindings; VM reload + disk-shaped JSON; headless A≠B selections | Avalonia click→quit→reopen once still nice-to-have; see [`Volume_Rehearsal_Evidence_2026-09-15.md`](./Volume_Rehearsal_Evidence_2026-09-15.md) |
 | U08 | LiveMeetsCondition + version badge | Eval time, stale/missing honesty (Q04) |
 | U09 / C06 | Draft binds condition id+hash | Same verdict in generated strategy (V06) |

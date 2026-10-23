@@ -38,10 +38,10 @@ public partial class ExecutionConsoleWindow : Window
         }
     }
 
-    private async Task<bool> ConfirmIntoOmsAsync(TsdPendingConfirm item, CancellationToken ct)
+    private async Task<ExecutionConfirmOutcome> ConfirmIntoOmsAsync(TsdPendingConfirm item, CancellationToken ct)
     {
         if (DataContext is not ExecutionConsoleViewModel console)
-            return false;
+            return ExecutionConfirmOutcome.Failed;
         return await console.ConfirmPendingIntoOmsAsync(
             item.Symbol,
             item.Side,

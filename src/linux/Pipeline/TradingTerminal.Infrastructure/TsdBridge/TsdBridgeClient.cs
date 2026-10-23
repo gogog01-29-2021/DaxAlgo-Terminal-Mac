@@ -8,7 +8,12 @@ using TradingTerminal.Core.Strategies;
 
 namespace TradingTerminal.Infrastructure.TsdBridge;
 
-/// <summary>One pending confirm surfaced to the UI as a normal strategy signal, not a "TSD" banner.</summary>
+/// <summary>
+/// One pending confirm surfaced to the UI as a normal strategy signal, not a "TSD" banner.
+/// BookId/ExecutionOwner/IntentVersion/GrantId/DedupeKey are the S06 field-map promotion (host
+/// admit lineage) carried through from the bridge payload so the eventual fill mirror can report
+/// real lineage instead of inventing a correlation id.
+/// </summary>
 public sealed record TsdPendingConfirm(
     string Id,
     string Kind, // signal | intent
@@ -20,7 +25,12 @@ public sealed record TsdPendingConfirm(
     string Note,
     long CreatedAtMs,
     StrategySignalKind SignalKind,
-    double? MarkPrice = null);
+    double? MarkPrice = null,
+    string BookId = "",
+    string ExecutionOwner = "",
+    string IntentVersion = "",
+    string GrantId = "",
+    string DedupeKey = "");
 
 
 /// <summary>In-memory inbox the Execution Console / shell can bind without knowing about HTTP.</summary>
@@ -181,6 +191,9 @@ public sealed class BridgeSignalDto
     public string Note { get; set; } = "";
     public long CreatedAtMs { get; set; }
     public double? MarkPrice { get; set; }
+    public string BookId { get; set; } = "";
+    public string ExecutionOwner { get; set; } = "";
+    public string StrategyVersion { get; set; } = "";
 }
 
 public sealed class BridgeIntentDto
@@ -201,6 +214,9 @@ public sealed class BridgeFillDto
     public string SignalId { get; set; } = "";
     public string ClientOrderId { get; set; } = "";
     public string DaxOrderId { get; set; } = "";
+    public string BookId { get; set; } = "";
+    public string IntentVersion { get; set; } = "";
+    public string DedupeKey { get; set; } = "";
 }
 
 internal sealed class SignalsResponse

@@ -19,14 +19,28 @@ public sealed class ExecutionConsoleViewModelConfirmIntoOmsTests
     [Fact]
     public async Task ConfirmPendingIntoOmsAsync_returns_true_and_no_error_when_oms_accepts()
     {
-        var client = new FakeExecutionClient(ExecutionCommandResult.Success("filled"));
+        var client = new FakeExecutionClient(ExecutionCommandResult.Success("filled", "daxt-book-1-1"));
         using var vm = CreateWithRealBookSelected(client);
 
-        var accepted = await vm.ConfirmPendingIntoOmsAsync("AAPL", "BUY", 5);
+        var outcome = await vm.ConfirmPendingIntoOmsAsync("AAPL", "BUY", 5);
 
-        accepted.Should().BeTrue();
+        outcome.Ok.Should().BeTrue();
         vm.ManualTicketError.Should().BeEmpty();
         client.SubmitCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ConfirmPendingIntoOmsAsync_carries_the_real_order_id_and_book_id_for_fill_mirroring()
+    {
+        // PendingConfirmsViewModel.ConfirmAsync uses these to mirror a fill back to the TSD
+        // bridge ledger with real lineage instead of a fabricated "confirm:{id}" correlation id.
+        var client = new FakeExecutionClient(ExecutionCommandResult.Success("filled", "daxt-book-1-7"));
+        using var vm = CreateWithRealBookSelected(client);
+
+        var outcome = await vm.ConfirmPendingIntoOmsAsync("AAPL", "BUY", 5);
+
+        outcome.OrderId.Should().Be("daxt-book-1-7");
+        outcome.BookId.Should().Be("book-1");
     }
 
     [Fact]
@@ -39,9 +53,9 @@ public sealed class ExecutionConsoleViewModelConfirmIntoOmsTests
             ExecutionCommandResult.Failure("Risk engine rejected: gross exposure limit exceeded"));
         using var vm = CreateWithRealBookSelected(client);
 
-        var accepted = await vm.ConfirmPendingIntoOmsAsync("AAPL", "BUY", 5);
+        var outcome = await vm.ConfirmPendingIntoOmsAsync("AAPL", "BUY", 5);
 
-        accepted.Should().BeFalse(
+        outcome.Ok.Should().BeFalse(
             "a risk-rejected order must not be reported to the caller as confirmed -- " +
             "the caller mirrors a fill to TSD and marks the intent 'confirmed' whenever this returns true");
         client.SubmitCalls.Should().Be(1, "the attempt should still reach the OMS -- this checks the OMS outcome is honored, not that dispatch was skipped");
@@ -66,9 +80,9 @@ public sealed class ExecutionConsoleViewModelConfirmIntoOmsTests
         using var vm = new ExecutionConsoleViewModel(
             client, new DeniedExecutionConfirmationService(), new FakeBrokerLoginFormFactory());
 
-        var accepted = await vm.ConfirmPendingIntoOmsAsync("AAPL", "BUY", 5);
+        var outcome = await vm.ConfirmPendingIntoOmsAsync("AAPL", "BUY", 5);
 
-        accepted.Should().BeFalse();
+        outcome.Ok.Should().BeFalse();
         client.SubmitCalls.Should().Be(0, "with no book/instrument match, dispatch must never reach the OMS");
     }
 

@@ -77,7 +77,10 @@ internal sealed class TsdBridgeHostedService : BackgroundService
                         Note: string.IsNullOrWhiteSpace(s.Note) ? "Strategy signal" : s.Note,
                         CreatedAtMs: s.CreatedAtMs,
                         SignalKind: MapKind(s.Kind),
-                        MarkPrice: s.MarkPrice));
+                        MarkPrice: s.MarkPrice,
+                        BookId: s.BookId,
+                        ExecutionOwner: s.ExecutionOwner,
+                        IntentVersion: s.StrategyVersion));
                 }
 
                 var intents = await _client.GetPendingIntentsAsync(stoppingToken)
@@ -102,7 +105,12 @@ internal sealed class TsdBridgeHostedService : BackgroundService
                             ? StrategySignalKind.Short
                             : qty == 0
                                 ? StrategySignalKind.Flat
-                                : StrategySignalKind.Long));
+                                : StrategySignalKind.Long,
+                        BookId: ReadPayloadString(intent, "book_id") ?? "",
+                        ExecutionOwner: ReadPayloadString(intent, "execution_owner") ?? "",
+                        IntentVersion: ReadPayloadString(intent, "intent_version") ?? "",
+                        GrantId: ReadPayloadString(intent, "grant_id") ?? "",
+                        DedupeKey: ReadPayloadString(intent, "dedupe_key") ?? ""));
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
