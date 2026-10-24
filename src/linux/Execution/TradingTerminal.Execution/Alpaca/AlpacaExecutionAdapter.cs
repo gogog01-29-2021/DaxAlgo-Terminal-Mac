@@ -1084,11 +1084,18 @@ public sealed class AlpacaExecutionAdapter : IBrokerExecutionAdapter, IDisposabl
             {
                 RememberBrokerId(tracked, order.OrderId);
                 tracked.CurrentTerms = terms;
-                tracked.State = state;
-                tracked.FilledQuantity = order.FilledQuantity;
-                tracked.FilledAveragePrice = order.FilledAveragePrice;
                 tracked.PendingReplacement = null;
-                tracked.Acknowledged = state is not OrderLifecycleState.Acknowledging and not OrderLifecycleState.Unknown;
+                // The fill cursor advances only in PublishFillDelta. Copying the broker cumulative
+                // here would hide the unpublished gap from the paper reconnect poll.
+                var brokerAhead = TrySubtract(order.FilledQuantity, tracked.FilledQuantity, out var unpublished) &&
+                                  unpublished.Coefficient > 0;
+                if (!brokerAhead)
+                {
+                    tracked.State = state;
+                    tracked.Acknowledged = state is not OrderLifecycleState.Acknowledging and not OrderLifecycleState.Unknown;
+                    if (order.FilledAveragePrice is not null)
+                        tracked.FilledAveragePrice = order.FilledAveragePrice;
+                }
                 snapshot = new VenueOrderSnapshot(
                     tracked.Instruction,
                     terms,

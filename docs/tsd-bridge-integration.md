@@ -41,7 +41,7 @@ Authoring confirm / draft lock ≠ order authority. OMS risk may still `RiskReje
 
 ## Fill mirror
 
-`TsdFillMirror` posts only for paper registrations. The dedupe key is `{confirm dedupe_key or order id}:{OMS fill key}`. Partial fills are incremental. A cumulative catch-up (reconnect poll) posts only the unmirrored gap.
+`TsdFillMirror` posts only for paper registrations. The dedupe key is `{confirm dedupe_key or order id}:{OMS fill key}`. Partial fills are incremental. A cumulative catch-up (reconnect poll) posts only the unmirrored gap. The Alpaca fill cursor advances only when that delta is published; a reconciliation snapshot does not copy the broker cumulative onto it.
 
 Deferred:
 

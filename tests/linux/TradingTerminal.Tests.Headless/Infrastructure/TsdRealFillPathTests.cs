@@ -259,7 +259,6 @@ public sealed class TsdRealFillPathTests
         {
             Client.Dispose();
             await Adapter.DisposeAsync();
-            await Scheduler.DisposeAsync();
         }
     }
 

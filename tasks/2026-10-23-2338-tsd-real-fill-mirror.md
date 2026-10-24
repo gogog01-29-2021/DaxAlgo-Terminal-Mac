@@ -29,11 +29,15 @@ Trade updates already land in OMS via `AlpacaExecutionAdapter.PublishFillDelta` 
 
 ## Diff summary
 
-Pending.
+Paper confirm registers the OMS order and replays committed fills. Later fills notify `IExecutionFillObserver` and `TsdFillMirror` posts the incremental quantity. Alpaca paper connect and book reconcile poll order status back through `PublishFillDelta`. Reconciliation snapshots no longer advance that fill cursor ahead of the unpublished gap.
 
 ## Verification
 
-Pending.
+`dotnet test tests/linux/TradingTerminal.Tests.Headless/TradingTerminal.Tests.Headless.csproj --filter "FullyQualifiedName~TsdFill|FullyQualifiedName~TsdRealFill|FullyQualifiedName~TsdBridgeSoftFail|FullyQualifiedName~LiveExecutionConsoleFlow"` — 17 passed.
+
+`dotnet test tests/linux/TradingTerminal.App.Avalonia.Tests/TradingTerminal.App.Avalonia.Tests.csproj --filter FullyQualifiedName~ExecutionConsoleViewModelConfirmIntoOms` — 5 passed. The App.Avalonia suite also carries pre-existing research-condition-search failures that this change does not touch.
+
+`dotnet test tests/linux/TradingTerminal.Tests.Headless/TradingTerminal.Tests.Headless.csproj --filter FullyQualifiedName~LiveExecution` — 19 passed.
 
 ## Risks/deferred
 
@@ -41,3 +45,4 @@ Pending.
 - `BridgeFillDto` still has no `execution_owner`, `strategy_version`, or `grant_id` (those stay on the pending confirm).
 - Live confirms are not mirrored.
 - Intent status is still set when dispatch is accepted, not when the fill lands.
+- The macOS context index still predates the Execution projects. A full regen rewrites every shard fingerprint, so it was left unchanged.
